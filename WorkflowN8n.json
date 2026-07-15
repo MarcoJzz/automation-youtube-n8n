@@ -18,17 +18,9 @@
       "parameters": {
         "authentication": "serviceAccount",
         "resource": "fileFolder",
-        "queryString": "Dia 14",
+        "queryString": "={{ $('On form submission').item.json.body['mes'] }}",
         "returnAll": true,
-        "filter": {
-          "folderId": {
-            "__rl": true,
-            "value": "1cee8QBxdQh_xwGk8EO430iK-4yEPP6la",
-            "mode": "list",
-            "cachedResultName": "Julio",
-            "cachedResultUrl": "https://drive.google.com/drive/folders/1cee8QBxdQh_xwGk8EO430iK-4yEPP6la"
-          }
-        },
+        "filter": {},
         "options": {
           "fields": [
             "id"
@@ -53,7 +45,7 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const { spawnSync } = require('child_process');\nconst path = require('path');\nconst fs = require('fs');\n\nconst item = $input.item;\nconst fileName = item.binary.data.fileName;\nconst id = item.json ? item.json.id : '';\nconst name = item.json ? item.json.name : fileName;\n\n// Saltar videos ya subidos (evita [OK] duplicados y conteo incorrecto)\nif (fileName.startsWith('[OK] ') || fileName.startsWith('[OK]')) {\n  return { json: { id, name, fileName, title: fileName, stdout: 'SKIPPED', skipped: true } };\n}\n\n// Titulo original (con emojis, tildes, etc.) para YouTube\nconst title = path.parse(fileName).name;\n// Nombre limpio solo para guardar el archivo en disco (Windows no permite ciertos caracteres)\nconst safeName = fileName.replace(/[\\\\/:*?\"<>|]/g, '').trim() || 'video.mp4';\nconst filePath = 'C:/Users/Natanael/Playwright/tmp/' + safeName;\n\nconst buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\nfs.writeFileSync(filePath, buffer);\n\n// --- Programacion incremental ---\n// Contador propio: solo cuenta videos realmente subidos (ignora [OK])\nconst staticData = $getWorkflowStaticData('global');\nif (staticData.uploadIndex === undefined) staticData.uploadIndex = 0;\nvar currentIndex = staticData.uploadIndex;\nstaticData.uploadIndex++;\n\nvar baseHour = 6;\nvar baseMinute = 0;\nvar interval = 15;\nvar totalMin = baseMinute + (currentIndex * interval);\nvar hour = baseHour + Math.floor(totalMin / 60);\nvar minute = totalMin % 60;\nvar schedule = hour + ':' + minute.toString().padStart(2, '0');\n\nconst args = [\n  'C:/Users/Natanael/Playwright/upload.py',\n  '--file', filePath,\n  '--title', title,\n  '--schedule', schedule,\n  '--minimized',\n  '--retries', '2',\n  '--date', '2026-07-13',\n  '--related-url', 'DETRÁS DE CÁMARAS DE \"2 LOCOS ENAMORADOS\" (Making Of)',\n];\n\nconst result = spawnSync('python', args, {\n  timeout: 30 * 60 * 1000,\n  encoding: 'utf8',\n  cwd: 'C:/Users/Natanael/Playwright',\n  env: Object.assign({}, process.env, { PYTHONUTF8: '1' }),\n});\n\ntry { fs.unlinkSync(filePath); } catch (e) {}\n\nif (result.error) {\n  return { json: { id, name, fileName, title, error: true, message: 'No se pudo ejecutar python: ' + result.error.message } };\n}\n\nif (result.status !== 0) {\n  return { json: { id, name, fileName, title, error: true, stderr: result.stderr, stdout: result.stdout } };\n}\n\nreturn { json: { id, name, fileName, title, stdout: result.stdout } };"
+        "jsCode": "const { spawnSync } = require('child_process');\nconst path = require('path');\nconst fs = require('fs');\n\nconst item = $input.item;\nconst fileName = item.binary.data.fileName;\nconst id = item.json ? item.json.id : '';\nconst name = item.json ? item.json.name : fileName;\n\n// Evitar videos ya subidos (evita [OK] duplicados)\nif (fileName.startsWith('[OK] ') || fileName.startsWith('[ok] ')) {\n  return { json: { id, name, fileName, title: fileName, stdout: 'SKIPPED', skipped: true } };\n}\n\n// Limpieza de nombre para el archivo en el disco de Linux\nconst title = path.parse(fileName).name;\nconst safeName = fileName.replace(/[\\\\\\/:*?\"<>|]/g, \"\").trim() || 'video.mp4';\n\n// === RUTA TEMPORAL EN LINUX ===\nconst filePath = '/tmp/' + safeName;\n\n// Guardar el archivo binario descargado en el contenedor de Linux\nconst buffer = await this.helpers.getBinaryDataBuffer(0, \"data\");\nfs.writeFileSync(filePath, buffer);\n\n// === PARÁMETROS DINÁMICOS DESDE EL FORM TRIGGER ===\nconst inputsFormulario = $('On form submission').item.json.body;\n\n// Procesamos la hora de inicio (soporta formato HH:MM o número solo)\nconst horaInput = String(inputsFormulario.hora_inicio || \"06:00\");\nlet baseHour = 6;\nlet baseMinute = 0;\n\nif (horaInput.includes(':')) {\n  const parts = horaInput.split(':');\n  baseHour = parseInt(parts[0], 10);\n  baseMinute = parseInt(parts[1], 10);\n} else {\n  baseHour = parseInt(horaInput, 10);\n}\n\nconst interval = parseInt(inputsFormulario.intervalo || 15, 10);\nconst fechaPublicacion = inputsFormulario.fecha_publicacion || '';\nconst relatedUrl = inputsFormulario.url_relacionada || '';\n\n// Programación Incremental usando la posición nativa del elemento en el bucle\nconst currentIndex = $position; \nvar totalMin = baseMinute + (currentIndex * interval);\nvar hour = baseHour + Math.floor(totalMin / 60);\nvar minute = totalMin % 60;\nvar schedule = hour.toString().padStart(2, '0') + ':' + minute.toString().padStart(2, '0');\n\n// === CONFIGURACIÓN DEL SCRIPT EN LINUX VPS ===\nconst args = [\n  '/opt/n8n/scripts/upload.py', // Ruta de tu script en el Droplet\n  '--file', filePath,\n  '--title', title,\n  '--schedule', schedule,\n  '--minimized',\n  '--retries', '2',\n  '--date', fechaPublicacion,\n  '--related-url', relatedUrl,\n];\n\nconst result = spawnSync('python3', args, {\n  timeout: 30 * 60 * 1000, // Tiempo límite de 30 minutos por video\n  encoding: 'utf-8',\n  cwd: '/opt/n8n/scripts', // Directorio de trabajo en Linux\n  env: Object.assign({}, process.env, { PYTHONUNBUFFERED: '1' }),\n});\n\n// Limpiar el archivo de video temporal de Linux inmediatamente\ntry { fs.unlinkSync(filePath); } catch (_) {}\n\nif (result.error) {\n  return { json: { id, name, fileName, title, error: true, message: 'Fallo al ejecutar python: ' + result.error.message } };\n}\n\nreturn { json: { id, name, fileName, title, stdout: result.stdout, schedule, date: fechaPublicacion } };"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -70,7 +62,7 @@
       "parameters": {
         "authentication": "serviceAccount",
         "resource": "fileFolder",
-        "queryString": "*",
+        "queryString": "={{ $('On form submission').item.json.body['dia_carpeta'] }}",
         "returnAll": true,
         "filter": {
           "folderId": {
@@ -102,7 +94,7 @@
         "operation": "download",
         "fileId": {
           "__rl": true,
-          "value": "=",
+          "value": "={{ $json.id }}",
           "mode": "id"
         },
         "options": {}
@@ -128,7 +120,7 @@
       "typeVersion": 1,
       "position": [
         16,
-        160
+        -112
       ],
       "id": "4c740c19-02d8-44de-bb28-3717afd7ea85",
       "name": "When clicking ‘Execute workflow’"
@@ -498,6 +490,93 @@
       ],
       "id": "5e398c04-9b57-466a-9497-c0b754c30cdd",
       "name": "If"
+    },
+    {
+      "parameters": {
+        "formTitle": "Panel de Control - Publicación de Videos",
+        "formDescription": "Ingresa los parámetros del lote de videos que vas a programar para hoy.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Día de la Carpeta",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Mes",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Enero"
+                  },
+                  {
+                    "option": "Febrero"
+                  },
+                  {
+                    "option": "Marzo "
+                  },
+                  {
+                    "option": "Abril"
+                  },
+                  {
+                    "option": "Mayo"
+                  },
+                  {
+                    "option": "Junio"
+                  },
+                  {
+                    "option": "Julio"
+                  },
+                  {
+                    "option": "Agosto"
+                  },
+                  {
+                    "option": "Septiembre"
+                  },
+                  {
+                    "option": "Octubre"
+                  },
+                  {
+                    "option": "Noviembre"
+                  },
+                  {
+                    "option": "Diciembre"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Fecha de Publicación",
+              "fieldType": "date",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "URL del Video Relacionado"
+            },
+            {
+              "fieldLabel": "Hora de Inicio (Formato 24h)",
+              "fieldType": "number"
+            },
+            {
+              "fieldLabel": "Intervalo (en minutos)",
+              "fieldType": "number",
+              "defaultValue": "15",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        16,
+        80
+      ],
+      "id": "f691553a-3158-4b35-b361-170b86eb6547",
+      "name": "On form submission",
+      "webhookId": "7c9817f7-332d-48db-a96e-2b9356ae9c33"
     }
   ],
   "pinData": {},
@@ -566,13 +645,7 @@
     },
     "When clicking ‘Execute workflow’": {
       "main": [
-        [
-          {
-            "node": "Seach videos on folder",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        []
       ]
     },
     "Wait": {
@@ -625,6 +698,17 @@
           }
         ]
       ]
+    },
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Seach videos on folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": false,
@@ -633,7 +717,7 @@
     "binaryMode": "separate",
     "availableInMCP": false
   },
-  "versionId": "4a419ea9-1780-48e0-a716-12615a9a572a",
+  "versionId": "d57a8890-ee6b-40e3-80a0-c4de552f378d",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "367f933d060a42c25c380c5b3266dd46e8cc28982c86f4fc36519767ad468e58"

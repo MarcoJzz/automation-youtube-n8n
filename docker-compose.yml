@@ -19,6 +19,7 @@ services:
       - .env
     volumes:
       - n8n_data:/home/node/.n8n
+      - /opt/n8n/scripts:/opt/n8n/scripts
 
 volumes:
   caddy_data:
