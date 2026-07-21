@@ -8,8 +8,8 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        688,
-        208
+        816,
+        192
       ],
       "id": "189d30eb-036d-4e4d-b5bb-b515b5a339bb",
       "name": "Loop Over Items"
@@ -18,7 +18,8 @@
       "parameters": {
         "authentication": "serviceAccount",
         "resource": "fileFolder",
-        "queryString": "={{ $('On form submission').item.json.body['mes'] }}",
+        "searchMethod": "query",
+        "queryString": "=name = '{{ $json.Mes }}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
         "returnAll": true,
         "filter": {},
         "options": {
@@ -30,8 +31,8 @@
       "type": "n8n-nodes-base.googleDrive",
       "typeVersion": 3,
       "position": [
-        224,
-        80
+        240,
+        64
       ],
       "id": "503c48ad-57a9-49f8-a60d-ecc4fe2311b3",
       "name": "Seach videos on folder",
@@ -45,13 +46,13 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const { spawnSync } = require('child_process');\nconst path = require('path');\nconst fs = require('fs');\n\nconst item = $input.item;\nconst fileName = item.binary.data.fileName;\nconst id = item.json ? item.json.id : '';\nconst name = item.json ? item.json.name : fileName;\n\n// Evitar videos ya subidos (evita [OK] duplicados)\nif (fileName.startsWith('[OK] ') || fileName.startsWith('[ok] ')) {\n  return { json: { id, name, fileName, title: fileName, stdout: 'SKIPPED', skipped: true } };\n}\n\n// Limpieza de nombre para el archivo en el disco de Linux\nconst title = path.parse(fileName).name;\nconst safeName = fileName.replace(/[\\\\\\/:*?\"<>|]/g, \"\").trim() || 'video.mp4';\n\n// === RUTA TEMPORAL EN LINUX ===\nconst filePath = '/tmp/' + safeName;\n\n// Guardar el archivo binario descargado en el contenedor de Linux\nconst buffer = await this.helpers.getBinaryDataBuffer(0, \"data\");\nfs.writeFileSync(filePath, buffer);\n\n// === PARÁMETROS DINÁMICOS DESDE EL FORM TRIGGER ===\nconst inputsFormulario = $('On form submission').item.json.body;\n\n// Procesamos la hora de inicio (soporta formato HH:MM o número solo)\nconst horaInput = String(inputsFormulario.hora_inicio || \"06:00\");\nlet baseHour = 6;\nlet baseMinute = 0;\n\nif (horaInput.includes(':')) {\n  const parts = horaInput.split(':');\n  baseHour = parseInt(parts[0], 10);\n  baseMinute = parseInt(parts[1], 10);\n} else {\n  baseHour = parseInt(horaInput, 10);\n}\n\nconst interval = parseInt(inputsFormulario.intervalo || 15, 10);\nconst fechaPublicacion = inputsFormulario.fecha_publicacion || '';\nconst relatedUrl = inputsFormulario.url_relacionada || '';\n\n// Programación Incremental usando la posición nativa del elemento en el bucle\nconst currentIndex = $position; \nvar totalMin = baseMinute + (currentIndex * interval);\nvar hour = baseHour + Math.floor(totalMin / 60);\nvar minute = totalMin % 60;\nvar schedule = hour.toString().padStart(2, '0') + ':' + minute.toString().padStart(2, '0');\n\n// === CONFIGURACIÓN DEL SCRIPT EN LINUX VPS ===\nconst args = [\n  '/opt/n8n/scripts/upload.py', // Ruta de tu script en el Droplet\n  '--file', filePath,\n  '--title', title,\n  '--schedule', schedule,\n  '--minimized',\n  '--retries', '2',\n  '--date', fechaPublicacion,\n  '--related-url', relatedUrl,\n];\n\nconst result = spawnSync('python3', args, {\n  timeout: 30 * 60 * 1000, // Tiempo límite de 30 minutos por video\n  encoding: 'utf-8',\n  cwd: '/opt/n8n/scripts', // Directorio de trabajo en Linux\n  env: Object.assign({}, process.env, { PYTHONUNBUFFERED: '1' }),\n});\n\n// Limpiar el archivo de video temporal de Linux inmediatamente\ntry { fs.unlinkSync(filePath); } catch (_) {}\n\nif (result.error) {\n  return { json: { id, name, fileName, title, error: true, message: 'Fallo al ejecutar python: ' + result.error.message } };\n}\n\nreturn { json: { id, name, fileName, title, stdout: result.stdout, schedule, date: fechaPublicacion } };"
+        "jsCode": "const item = $input.item;\nconst fileName = item.binary.data.fileName;\nconst id = item.json ? item.json.id : '';\nconst name = item.json ? item.json.name : fileName;\n\n// Evitar videos ya subidos (evita [OK] duplicados)\nif (fileName.startsWith('[OK] ') || fileName.startsWith('[ok] ')) {\n  return { \n    json: { \n      id, \n      name, \n      fileName, \n      title: fileName, \n      stdout: 'SKIPPED', \n      skipped: true \n    } \n  };\n}\n\n// Limpieza de nombre para el archivo en el disco de Linux (sin usar path)\nconst title = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;\nconst safeName = fileName.replace(/[\\\\/:*?\"<>|]/g, \"\").trim() || \"video.mp4\";\n\n// RUTA TEMPORAL EN LINUX\nconst filePath = `/tmp/${safeName}`;\n\n// PARAMETROS DINÁMICOS DESDE EL FORM TRIGGER\nconst inputsFormulario = $('On form submission').item?.json?.body || {};\n\n// Procesamos la hora de inicio (soporte formato HH:MM o número solo)\nconst horaInput = String(inputsFormulario.hora_inicio || \"00:00\");\nlet baseHour = 0;\nlet baseMinute = 0;\n\nif (horaInput.includes(':')) {\n  const parts = horaInput.split(':');\n  baseHour = parseInt(parts[0], 10);\n  baseMinute = parseInt(parts[1], 10);\n} else {\n  baseHour = parseInt(horaInput, 10);\n}\n\nconst interval = parseInt(inputsFormulario.intervalo) || 15;\nconst fechaPublicacion = inputsFormulario.fecha_publicacion || \"\";\nconst relatedUrl = inputsFormulario.url_relacionado || \"\";\nconst visibilidadForm = inputsFormulario.visibilidad || 'Draft';\nconst canalForm = inputsFormulario.canal || 'Artamios';\n\n// Selecciona dinámicamente la carpeta de sesión\nconst sessionName = (canalForm === 'Arta Extra') ? 'youtube_session_extra' : 'youtube_session_artamios';\n\n// Programación incremental usando la posición nativa del elemento en el bucle\nconst currentIndex = $position;\nconst totalMin = baseMinute + (currentIndex * interval);\nconst hour = baseHour + Math.floor(totalMin / 60);\nconst minute = totalMin % 60;\nconst schedule = hour.toString().padStart(2, '0') + ':' + minute.toString().padStart(2, '0');\n\n// === CONFIGURACIÓN DEL SCRIPT EN LINUX VPS ===\nconst args = [\n  '/opt/n8n/scripts/upload.py', // Ruta de tu script en el Droplet\n  '--file', filePath,\n  '--title', title,\n  '--session', sessionName,\n  '--minimized',\n];\n\n// Lógica de visibilidad basada en la selección del Formulario\n// Agregamos siempre el schedule ya que el script lo exige obligatoriamente\nargs.push('--schedule', schedule);\n\n// Lógica de visibilidad basada en la selección del Formulario\nif (visibilidadForm.toLowerCase() === 'programado') {\n    if (fechaPublicacion) {\n        args.push('--date', fechaPublicacion);\n    }\n} else if (visibilidadForm.toLowerCase() === 'privado') {\n    args.push('--private');\n} else if (visibilidadForm.toLowerCase() === 'draft' || visibilidadForm.toLowerCase() === 'borrador') {\n    args.push('--draft');\n}\n\nif (relatedUrl) {\n  args.push('--related-url', relatedUrl);\n}\n\nreturn {\n  json: {\n    args: args, // Pasamos el array de argumentos completo\n    filePath: filePath,\n    title: title,\n    sessionName: sessionName,\n    schedule: schedule,\n    visibilidad: visibilidadForm,\n    fechaPublicacion: fechaPublicacion,\n    canalForm: canalForm,\n    relatedUrl: relatedUrl\n  }\n};"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1248,
-        352
+        1616,
+        336
       ],
       "id": "bd5df501-7648-42ca-9742-bc1863142d4b",
       "name": "Code in JavaScript",
@@ -62,7 +63,7 @@
       "parameters": {
         "authentication": "serviceAccount",
         "resource": "fileFolder",
-        "queryString": "={{ $('On form submission').item.json.body['dia_carpeta'] }}",
+        "queryString": "=Dia {{ $('On form submission').item.json['Día de la Carpeta'] }}",
         "returnAll": true,
         "filter": {
           "folderId": {
@@ -76,8 +77,8 @@
       "type": "n8n-nodes-base.googleDrive",
       "typeVersion": 3,
       "position": [
-        448,
-        112
+        432,
+        176
       ],
       "id": "531aa419-0c3a-49a4-aae3-a90320ea7e22",
       "name": "Search files and folders",
@@ -102,8 +103,8 @@
       "type": "n8n-nodes-base.googleDrive",
       "typeVersion": 3,
       "position": [
-        1008,
-        352
+        1136,
+        336
       ],
       "id": "1937038b-3cd1-492f-bf22-1306edec420c",
       "name": "Download file",
@@ -120,7 +121,7 @@
       "typeVersion": 1,
       "position": [
         16,
-        -112
+        -96
       ],
       "id": "4c740c19-02d8-44de-bb28-3717afd7ea85",
       "name": "When clicking ‘Execute workflow’"
@@ -132,8 +133,8 @@
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        2112,
-        480
+        2688,
+        464
       ],
       "id": "8acfedd8-4ef5-4905-9cf1-bed294c098d6",
       "name": "Wait",
@@ -145,10 +146,8 @@
         "operation": "update",
         "fileId": {
           "__rl": true,
-          "value": "",
-          "mode": "id",
-          "cachedResultName": "",
-          "cachedResultUrl": ""
+          "value": "={{ $('Download file').item.json.id }}",
+          "mode": "id"
         },
         "newUpdatedFileName": "={{ \"[OK] \" + $('Download file').item.json.name }}",
         "options": {}
@@ -156,8 +155,8 @@
       "type": "n8n-nodes-base.googleDrive",
       "typeVersion": 3,
       "position": [
-        1872,
-        384
+        2448,
+        368
       ],
       "id": "a1d2c295-0169-4fdc-a05e-80bd9affd7d1",
       "name": "Update file",
@@ -170,7 +169,6 @@
     },
     {
       "parameters": {
-        "authentication": "serviceAccount",
         "sendTo": "natanaelmh1@gmail.com",
         "subject": "Los videos ha sido subidos y programados! 👺",
         "message": "=<!DOCTYPE html> <html lang=\"es\"> <head>   <meta charset=\"UTF-8\">   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">   <title>Videos subidos</title> </head> <body style=\"margin:0;padding:0;background-color:#f4f2ed;font-family:Arial,'Helvetica Neue',Helvetica,sans-serif;\">   <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"background-color:#f4f2ed;\">     <tr>       <td align=\"center\" style=\"padding:40px 16px;\">         <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" width=\"520\" style=\"max-width:520px;width:100%;\">            <!-- Header -->           <tr>             <td style=\"background-color:#1a1a18;border-radius:16px 16px 0 0;padding:36px 40px 28px;\">               <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\">                 <tr>                   <td>                     <div style=\"width:44px;height:44px;border-radius:50%;background-color:#22c55e;text-align:center;line-height:44px;font-size:22px;\">&#10003;</div>                   </td>                 </tr>                 <tr>                   <td style=\"padding-top:20px;\">                     <h1 style=\"margin:0;font-size:22px;font-weight:600;color:#ffffff;letter-spacing:-0.3px;\">Videos subidos correctamente</h1>                   </td>                 </tr>                 <tr>                   <td style=\"padding-top:8px;\">                     <p style=\"margin:0;font-size:15px;color:#a1a09a;line-height:1.5;\">Tu automatización terminó sin errores. Aquí tienes el resumen.</p>                   </td>                 </tr>               </table>             </td>           </tr>            <!-- Stats row -->           <tr>             <td style=\"background-color:#232321;padding:0 40px;\">               <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\">                 <tr>                   <td width=\"50%\" style=\"padding:20px 0;text-align:center;border-bottom:1px solid #333330;\">                     <div style=\"font-size:28px;font-weight:700;color:#22c55e;letter-spacing:-1px;\">{{ $('Search files and folders').all().length }}</div>                     <div style=\"font-size:11px;color:#888884;text-transform:uppercase;letter-spacing:1px;padding-top:4px;\">Videos</div>                   </td>                   <td width=\"50%\" style=\"padding:20px 0;text-align:center;border-bottom:1px solid #333330;border-left:1px solid #333330;\">                     <div style=\"font-size:28px;font-weight:700;color:#f9cb42;letter-spacing:-1px;\">Borrador</div>                     <div style=\"font-size:11px;color:#888884;text-transform:uppercase;letter-spacing:1px;padding-top:4px;\">Modo</div>                   </td>                 </tr>               </table>             </td>           </tr>            <!-- Video list: first 5 with cards, rest summarized -->           <tr>             <td style=\"background-color:#232321;padding:24px 40px 8px;\">               <p style=\"margin:0 0 16px;font-size:12px;color:#888884;text-transform:uppercase;letter-spacing:1px;\">Detalle de publicación</p>                {{ $('Search files and folders').all().slice(0, 5).map((item, i) => '<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"margin-bottom:10px;\"><tr><td style=\"background-color:#2c2c2a;border-radius:10px;padding:14px 18px;\"><table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\"><tr><td><div style=\"font-size:14px;color:#e8e7e2;font-weight:500;\">' + item.json.name.replace(/\\.[^.]+$/, '') + '</div><div style=\"font-size:12px;color:#888884;padding-top:3px;\">Guardado como Borrador</div></td><td width=\"36\" align=\"right\" valign=\"middle\"><div style=\"width:28px;height:28px;border-radius:50%;background-color:rgba(34,197,94,0.15);text-align:center;line-height:28px;font-size:14px;color:#22c55e;\">&#10003;</div></td></tr></table></td></tr></table>').join('') }}                {{ $('Search files and folders').all().length > 5 ? '<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"margin-bottom:10px;\"><tr><td style=\"background-color:#2c2c2a;border-radius:10px;padding:16px 18px;text-align:center;\"><div style=\"font-size:14px;color:#f9cb42;font-weight:500;\">+ ' + ($('Search files and folders').all().length - 5) + ' videos más guardados como borrador</div></td></tr></table>' : '' }}             </td>           </tr>            <!-- CTA -->           <tr>             <td style=\"background-color:#232321;padding:16px 40px 32px;\">               <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\">                 <tr>                   <td align=\"center\">                     <a href=\"https://studio.youtube.com/channel/UCccuyhBKw0fX_vt8lfxrZcw/videos\" target=\"_blank\" style=\"display:inline-block;background-color:#ff0033;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;padding:12px 32px;border-radius:8px;\">Ver en YouTube Studio</a>                   </td>                 </tr>               </table>             </td>           </tr>            <!-- Footer -->           <tr>             <td style=\"background-color:#1a1a18;border-radius:0 0 16px 16px;padding:24px 40px;\">               <p style=\"margin:0;font-size:12px;color:#5f5e5a;line-height:1.6;\">                 Enviado automáticamente por tu workflow de n8n.<br>                 Si hay algún problema, revisa el historial de ejecuciones en n8n.               </p>             </td>           </tr>          </table>       </td>     </tr>   </table> </body> </html>",
@@ -179,15 +177,15 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        992,
-        128
+        1120,
+        112
       ],
       "id": "6e5ae7df-c7f6-4fbf-84be-4ef4c40c3fb9",
       "name": "Gmail",
       "webhookId": "ac04d784-97fe-42a9-aee8-a42b34a4a3d8",
       "executeOnce": true,
       "credentials": {
-        "googleApi": {
+        "gmailOAuth2": {
           "id": "uqAZ3JpmtH7YFN68",
           "name": "Gmail account"
         }
@@ -205,10 +203,8 @@
         },
         "table": {
           "__rl": true,
-          "value": "tblVgkadHmaRK8zUm",
-          "mode": "list",
-          "cachedResultName": "Julio",
-          "cachedResultUrl": "https://airtable.com/appsWDnQAdttg5FqL/tblVgkadHmaRK8zUm"
+          "value": "={{ $('On form submission').item.json.Mes }}",
+          "mode": "id"
         },
         "columns": {
           "mappingMode": "defineBelow",
@@ -434,8 +430,8 @@
       "type": "n8n-nodes-base.airtable",
       "typeVersion": 2.1,
       "position": [
-        1664,
-        240
+        2240,
+        224
       ],
       "id": "e43b2937-9002-4ce2-8f78-c17b90276bf5",
       "name": "Airtable",
@@ -485,8 +481,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1456,
-        352
+        2032,
+        336
       ],
       "id": "5e398c04-9b57-466a-9497-c0b754c30cdd",
       "name": "If"
@@ -497,6 +493,22 @@
         "formDescription": "Ingresa los parámetros del lote de videos que vas a programar para hoy.",
         "formFields": {
           "values": [
+            {
+              "fieldLabel": "Subir al Canal",
+              "fieldType": "dropdown",
+              "defaultValue": "Artamios",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Artamios"
+                  },
+                  {
+                    "option": "ArtaExtra"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
             {
               "fieldLabel": "Día de la Carpeta",
               "requiredField": true
@@ -552,11 +564,28 @@
               "requiredField": true
             },
             {
+              "fieldLabel": "Visibilidad del Video",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Draft"
+                  },
+                  {
+                    "option": "Privado"
+                  },
+                  {
+                    "option": "Programado"
+                  }
+                ]
+              }
+            },
+            {
               "fieldLabel": "URL del Video Relacionado"
             },
             {
-              "fieldLabel": "Hora de Inicio (Formato 24h)",
-              "fieldType": "number"
+              "fieldLabel": "Hora de Inicio (Formato 24h HH:MM, ej: 07:30 o 19:45)",
+              "requiredField": true
             },
             {
               "fieldLabel": "Intervalo (en minutos)",
@@ -577,6 +606,66 @@
       "id": "f691553a-3158-4b35-b361-170b86eb6547",
       "name": "On form submission",
       "webhookId": "7c9817f7-332d-48db-a96e-2b9356ae9c33"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "resource": "fileFolder",
+        "searchMethod": "query",
+        "queryString": "='{{ $json.id }}' in parents and mimeType contains 'video/' and trashed = false",
+        "returnAll": true,
+        "filter": {},
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        624,
+        64
+      ],
+      "id": "178c6aa0-4167-4c44-81fa-fd195d0a22dc",
+      "name": "Search files and folders1",
+      "credentials": {
+        "googleApi": {
+          "id": "TafXxZCusXEkYUuB",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=python3 {{ $json.args.join(' ') }}"
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        1808,
+        336
+      ],
+      "id": "24d8b5a4-4b11-4e3d-a782-e2da45ab7873",
+      "name": "Execute a command",
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "ZTVBVNUvdAZHtJZ9",
+          "name": "SSH Password account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "=/opt/n8n/scripts/{{ $json.name }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        1376,
+        336
+      ],
+      "id": "ecc59e7a-f3be-4428-b162-9cdee1032185",
+      "name": "Read/Write Files from Disk"
     }
   ],
   "pinData": {},
@@ -614,7 +703,7 @@
       "main": [
         [
           {
-            "node": "If",
+            "node": "Execute a command",
             "type": "main",
             "index": 0
           }
@@ -625,7 +714,7 @@
       "main": [
         [
           {
-            "node": "Loop Over Items",
+            "node": "Search files and folders1",
             "type": "main",
             "index": 0
           }
@@ -636,7 +725,7 @@
       "main": [
         [
           {
-            "node": "Code in JavaScript",
+            "node": "Read/Write Files from Disk",
             "type": "main",
             "index": 0
           }
@@ -709,6 +798,39 @@
           }
         ]
       ]
+    },
+    "Search files and folders1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a command": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read/Write Files from Disk": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": false,
@@ -717,7 +839,7 @@
     "binaryMode": "separate",
     "availableInMCP": false
   },
-  "versionId": "d57a8890-ee6b-40e3-80a0-c4de552f378d",
+  "versionId": "0b039761-7c97-4f4c-b38c-b96872ba2a02",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "367f933d060a42c25c380c5b3266dd46e8cc28982c86f4fc36519767ad468e58"
